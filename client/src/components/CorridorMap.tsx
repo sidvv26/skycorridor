@@ -9,7 +9,7 @@ import {
   type TrafficDrone,
   type TrafficStatusEntry,
 } from "../ambientTraffic";
-import { getDeconflictedRoute, getTelemetryForCorridor } from "../api";
+import { getDeconflictedRoute, getLiveWind, getTelemetryForCorridor } from "../api";
 import { createDroneElement, createEmojiElement, setDroneRotation, setElementRotation } from "../droneIcon";
 import {
   bearingDeg,
@@ -1232,7 +1232,18 @@ export default function CorridorMap({
     // function expressions, not hoisted function declarations.
     const run = async () => {
       simActiveRef.current = true;
-      const wind = generateSimulatedWind();
+      let wind: { speedMps: number; fromDeg: number };
+      try {
+        const midpoint = {
+          lat: (activeCorridor.start.lat + activeCorridor.end.lat) / 2,
+          lon: (activeCorridor.start.lon + activeCorridor.end.lon) / 2,
+        };
+        wind = await getLiveWind(midpoint, activeCorridor.altitudeMeters);
+      } catch {
+        // Open-Meteo unreachable or rate-limited — don't block the flight on
+        // a third-party API; fall back to a plausible simulated value.
+        wind = generateSimulatedWind();
+      }
       if (windHudRef.current) {
         windHudRef.current.innerHTML = `<span class="wind-arrow" style="transform:rotate(${(wind.fromDeg + 180) % 360}deg)">➤</span><span>${wind.speedMps.toFixed(1)} m/s wind</span>`;
       }
