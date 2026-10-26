@@ -37,10 +37,15 @@ export default function TelemetryPanel({ telemetry, loading, error, onRefresh }:
 
       {telemetry && (
         <dl className="telemetry-grid">
-          <dt>Live wind</dt>
+          <dt>{telemetry.wind.sourceBandsMeters.length > 0 ? "Live wind" : "Wind"}</dt>
           <dd>
             {fmt(telemetry.wind.speedMps)} m/s from {fmt(telemetry.wind.fromDeg, 0)}°
-            <span className="sub"> (bands: {telemetry.wind.sourceBandsMeters.join("/")} m)</span>
+            <span className="sub">
+              {" "}
+              {telemetry.wind.sourceBandsMeters.length > 0
+                ? `(bands: ${telemetry.wind.sourceBandsMeters.join("/")} m)`
+                : "(estimated — live data unavailable)"}
+            </span>
           </dd>
 
           <dt>Course / distance</dt>

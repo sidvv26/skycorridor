@@ -6,6 +6,14 @@ import { DEFAULT_DRONE_PROFILE, type Corridor, type DroneProfile, type Telemetry
 
 export const telemetryRouter = Router();
 
+// Mirrors the client's generateSimulatedWind() range (6-15 m/s, any
+// direction) — see client/src/syntheticScenario.ts for why that range was
+// chosen (reliably produces a visible crab angle without constantly
+// triggering the battery failsafe).
+function fallbackWind(): WindVector {
+  return { speedMps: 6 + Math.random() * 9, fromDeg: Math.random() * 360, sourceBandsMeters: [] };
+}
+
 async function telemetryForCorridor(
   corridor: Corridor,
   profile: DroneProfile,
@@ -17,7 +25,15 @@ async function telemetryForCorridor(
       lat: (corridor.start.lat + corridor.end.lat) / 2,
       lon: (corridor.start.lon + corridor.end.lon) / 2,
     };
-    wind = await fetchWindVector(midpoint, corridor.altitudeMeters);
+    try {
+      wind = await fetchWindVector(midpoint, corridor.altitudeMeters);
+    } catch {
+      // Open-Meteo unreachable or rate-limited — don't fail the whole
+      // telemetry request over a third-party outage; fall back to a
+      // plausible simulated value instead (sourceBandsMeters: [] signals to
+      // the client this wasn't a real live reading).
+      wind = fallbackWind();
+    }
   }
   return computeCorridorTelemetry(corridor, wind, profile);
 }
