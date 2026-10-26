@@ -4,6 +4,8 @@ A micro-airspace navigation platform prototype:
 
 `[User selects a sky corridor] → [App fetches live wind vectors] → [Telemetry engine calculates crab angle & battery drain]`
 
+"if the map doesn't load data in the first few seconds, give it ~30-60 seconds — the free backend is waking up."
+
 ## Structure
 
 - `server/` — Express + TypeScript API
