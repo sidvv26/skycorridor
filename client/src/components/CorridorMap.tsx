@@ -191,24 +191,6 @@ function effectiveDangerRadius(atLat: number, zoom: number): number {
   return Math.max(DANGER_RADIUS_METERS, Math.min(MAX_VISUAL_DANGER_RADIUS_METERS, visual));
 }
 
-/** The zoom frameCorridor's fitBounds will actually settle at for this
- * corridor, computed synchronously via cameraForBounds rather than read off
- * the live camera. Needed because a one-time calculation like the obstacle
- * route's visual clearance (built once, right when "Simulate Flight" is
- * clicked) can run before that camera animation has finished settling —
- * map.getZoom() at that exact moment could still be mid-transition from
- * whatever corridor was framed previously, silently locking in the wrong
- * clearance for the entire flight. The per-frame ambient-traffic version of
- * this calculation doesn't have the same problem: it re-reads the live zoom
- * every frame for the whole flight, so an early frame or two during a
- * transition just self-corrects on the next frame. */
-function overviewTargetZoom(map: maplibregl.Map, corridor: Corridor): number {
-  const start: [number, number] = [corridor.start.lon, corridor.start.lat];
-  const end: [number, number] = [corridor.end.lon, corridor.end.lat];
-  const bounds = new maplibregl.LngLatBounds(start, start).extend(end);
-  const camera = map.cameraForBounds(bounds, { padding: 90, maxZoom: 17 });
-  return camera?.zoom ?? map.getZoom();
-}
 
 function obstacleWobbleMetersForVisual(kind: ObstacleKind): number {
   if (kind === "bird") return BIRD_CIRCLE_RADIUS_M;
@@ -275,9 +257,10 @@ function buildVisuallyClearRoute(
     }
 
     if (worstGapPx >= TARGET_OBSTACLE_GAP_PX || obstacles.every((o) => o.kind === "building")) break;
-    clearance *= 1.5;
+    const widened = Math.min(clearance * 1.5, MAX_VISUAL_DANGER_RADIUS_METERS);
+    if (widened === clearance) break; // already at the real-world cap — more attempts won't change anything
+    clearance = widened;
   }
-
   return routed;
 }
 
@@ -286,6 +269,17 @@ function pxDelta(a: { x: number; y: number }, b: { x: number; y: number }): [num
 }
 
 const GEOFENCE_ICON_RADIUS_PX = 13;
+// Absolute ceiling on how far the TFR detour waypoint can sit from the
+// fence's center. The adaptive step below estimates real-world meters from
+// an on-screen pixel gap by dividing by the local meters-per-pixel ratio at
+// the closest-approach point — under the pitched camera, a point that's
+// heavily foreshortened (near the horizon) can project only a handful of
+// pixels from the fence center despite being genuinely far away in meters,
+// making that ratio explode and sending the waypoint kilometers off in a
+// single step. Fences only ever have a 90-150m radius, so 600m of real
+// clearance from center is already generous; anything past that is the
+// runaway case, not a real need.
+const MAX_TFR_DETOUR_METERS = 600;
 
 /** Same idea as buildVisuallyClearRoute, for the TFR safety-path: the
  * server's deconfliction endpoint (deconfliction.ts) guarantees the detour
@@ -359,7 +353,8 @@ function widenTfrRouteForVisualClearance(map: maplibregl.Map, segments: RouteSeg
     const closestSampleDistMeters = distanceMeters(fence.center, closestSamplePoint) || 1;
     const localMetersPerPx = closestSampleDistMeters / Math.max(minDistPx, 1);
     const neededExtraPx = TARGET_OBSTACLE_GAP_PX - gapPx;
-    const newDist = currentDist + neededExtraPx * localMetersPerPx * 1.6;
+    const newDist = Math.min(currentDist + neededExtraPx * localMetersPerPx * 1.6, MAX_TFR_DETOUR_METERS);
+    if (newDist <= currentDist) break; // already at the real-world cap — further attempts can't improve on this
     points[closestIdx] = offsetPoint(fence.center, bearing, newDist);
     result = points.slice(0, -1).map((p, i) => ({ ...result[i], start: p, end: points[i + 1] }));
   }
@@ -1288,22 +1283,23 @@ export default function CorridorMap({
       } else {
         onStatus("Scanning airspace for obstacles…");
         obstacles = generateObstacles(activeCorridor.id, activeCorridor.start, activeCorridor.end, activeCorridor.altitudeMeters);
-        // Seed with the same zoom-aware nadir estimate used for
-        // ambient-traffic avoidance, then verify and — if needed —
-        // progressively widen it against the map's *actual* projection
-        // (buildVisuallyClearRoute), since the route can be (and is)
-        // geometrically clear while still reading as a near-miss on
-        // screen under this pitched camera, for the same reason flat
-        // multiplier corrections on top of the nadir estimate kept
-        // failing to fully eliminate it (see that function's doc comment).
-        const obstacleVisualClearance = effectiveDangerRadius(activeCorridor.start.lat, overviewTargetZoom(map, activeCorridor));
+        // Seed at zero extra clearance — buildRoutePath's own margins
+        // (corridor half-width, obstacle radius, wobble) already keep the
+        // route physically clear. buildVisuallyClearRoute then measures the
+        // *actual* on-screen gap against the map's real projection and only
+        // widens it the amount this specific obstacle/camera combination
+        // needs. Seeding with the worst-case zoom-wide estimate used for
+        // real-time ambient-traffic evasion (effectiveDangerRadius) made
+        // every route swing that wide even when the real projected gap
+        // needed far less, reading as the drone taking unrealistically
+        // heavy detours around obstacles it was already clearing.
         const routedSegments = buildVisuallyClearRoute(
           map,
           activeCorridor.start,
           activeCorridor.end,
           obstacles,
           activeCorridor.altitudeMeters,
-          obstacleVisualClearance,
+          0,
         );
         path = [routedSegments[0].start, ...routedSegments.map((s) => s.end)];
         segmentAltitudes = routedSegments.map((s) => s.altitudeMeters);
