@@ -27,27 +27,6 @@ export function getTelemetry(corridorId: string): Promise<TelemetryResult> {
   return getJson(`/api/telemetry/${corridorId}`);
 }
 
-export interface LiveWind {
-  speedMps: number;
-  fromDeg: number;
-}
-
-/** Live wind speed/direction from Open-Meteo at a point and altitude —
- * throws on failure so callers can fall back to a simulated value rather
- * than blocking a flight on a third-party API being unreachable. */
-export async function getLiveWind(location: LatLon, altitudeMeters: number): Promise<LiveWind> {
-  const res = await fetch(`${API_BASE}/api/wind/custom`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lat: location.lat, lon: location.lon, altitudeMeters }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Wind request failed: ${res.status}`);
-  }
-  return res.json() as Promise<LiveWind>;
-}
-
 export async function getTelemetryForCorridor(
   corridor: Corridor,
   windOverride?: { speedMps: number; fromDeg: number },
